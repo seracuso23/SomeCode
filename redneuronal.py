@@ -1,49 +1,60 @@
-import tensorflow as tf
-from tensorflow import keras
-from tensorflow.keras.layers import Dense, Dropout
 import optuna
-from sklearn.model_selection import KFold
+from sklearn.neural_network import MLPClassifier
+from sklearn.model_selection import cross_val_score
+from sklearn.datasets import load_iris
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
 import numpy as np
 
-def create_model(trial):
-    model = keras.Sequential()
-    n_layers = trial.suggest_int('n_layers', 1, 3)
-    activation = trial.suggest_categorical('activation', ['relu', 'sigmoid', 'tanh'])
-    model.add(Dense(trial.suggest_int('n_units', 32, 512), activation=activation, input_shape=(input_shape,)))
-    model.add(Dropout(trial.suggest_float('dropout', 0.0, 0.5)))
-    for i in range(n_layers):
-        model.add(Dense(trial.suggest_int(f'n_units_l{i}', 32, 512), activation=activation))
-        model.add(Dropout(trial.suggest_float(f'dropout_l{i}', 0.0, 0.5)))
-    model.add(Dense(num_classes, activation='softmax'))
-    return model
 
+# Paso 1: cargar y preparar los datos
+X, y = load_iris(return_X_y=True)
+scaler = StandardScaler()
+X = scaler.fit_transform(X)
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+
+# Paso 2: definir la función objetivo para Optuna
 def objective(trial):
-    kfold = KFold(n_splits=5, shuffle=True)
-    val_losses = []
-    for train_idx, val_idx in kfold.split(X_train, y_train):
-        X_train_fold = X_train[train_idx]
-        y_train_fold = y_train[train_idx]
-        X_val_fold = X_train[val_idx]
-        y_val_fold = y_train[val_idx]
-        model = create_model(trial)
-        model.compile(loss='categorical_crossentropy', optimizer='adam', metrics=['accuracy'])
-        model.fit(X_train_fold, y_train_fold, epochs=trial.suggest_int('epochs', 10, 50), batch_size=trial.suggest_int('batch_size', 32, 256), verbose=0)
-        val_loss, val_acc = model.evaluate(X_val_fold, y_val_fold, verbose=0)
-        val_losses.append(val_loss)
-    return np.mean(val_losses)
+    # Definir el espacio de búsqueda para cada hiperparámetro
+    n_layers = trial.suggest_int('n_layers', 1, 4)
+    hidden_layer_sizes = []
+    for i in range(n_layers):
+        layer_size = trial.suggest_int(f"n_units_l{i+1}", 1, 100)
+        hidden_layer_sizes.append(layer_size)
+    activation_funcs = []
+    for i in range(n_layers):
+        activation_func = trial.suggest_categorical(f"activation_l{i+1}", ['relu', 'tanh', 'sigmoid', 'softsign', 'softmax'])
+        activation_funcs.append(activation_func)
+    dropouts = []
+    for i in range(n_layers):
+        dropout = trial.suggest_uniform(f"dropout_l{i+1}", 0, 1)
+        dropouts.append(dropout)
+    epoch = trial.suggest_int('epoch', 10, 100)
+    batch_size = trial.suggest_int('batch_size', 16, 128)
+    optimizer = trial.suggest_categorical('optimizer', ['SGD', 'Adam', 'Adagrad', 'AdaDelta', 'RMSprop'])
+    learning_rate = trial.suggest_loguniform('learning_rate', 1e-5, 1e-1)
 
-# Define the search space and optimization algorithm using Optuna
-input_shape = X_train.shape[1]
-num_classes = y_train.shape[1]
-study = optuna.create_study(direction='minimize')
+    # Definir el modelo MLP con los hiperparámetros sugeridos por Optuna
+    mlp = MLPClassifier(hidden_layer_sizes=hidden_layer_sizes, activation=activation_funcs,
+                        alpha=0.0001, batch_size=batch_size, learning_rate=learning_rate,
+                        learning_rate_init=0.001, max_iter=epoch, solver=optimizer, tol=0.0001,
+                        validation_fraction=0.1, verbose=False, warm_start=False, early_stopping=True,
+                        n_iter_no_change=5, random_state=42)
+
+    # Calcular la precisión promedio mediante validación cruzada de 5 veces
+    score = cross_val_score(mlp, X_train, y_train, cv=5, n_jobs=-1).mean()
+    return score
+
+
+# Paso 3: optimizar los hiperparámetros con Optuna
+study = optuna.create_study(direction='maximize')
 study.optimize(objective, n_trials=100)
 
-# Train the model with the best hyperparameters found by Optuna
-best_trial = study.best_trial
-best_model = create_model(best_trial)
-best_model.compile(loss='categorical_crossentropy', optimizer='adam', metrics=['accuracy'])
-best_model.fit(X_train, y_train, epochs=best_trial.params['epochs'], batch_size=best_trial.params['batch_size'], verbose=0)
+# Paso 4: imprimir los mejores hiperparámetros y el puntaje promedio en el conjunto de prueba
+best_params = study.best_params
+print(f"Los mejores hiperparámetros son: {best_params}")
 
-# Evaluate the model on the test set
-test_loss, test_acc = best_model.evaluate(X_test, y_test, verbose=0)
-print(f'Test loss: {test_loss}, Test accuracy: {test_acc}')
+mlp = MLPClassifier(hidden_layer_sizes=[best_params[f"n_units_l{i+1}"] for i in range(best_params["n_layers"])],
+                    activation=[best_params[f"activation_l{i+1}"] for i in range(best_params["n_layers"])],
+                    alpha=0.0001, batch_size=best
