@@ -238,12 +238,15 @@ def objective(trial):
     model.compile(loss='binary_crossentropy', optimizer=opt, metrics=['accuracy'])
 
     # Realizar validación cruzada
+    epochs_p = trial.suggest_int("epochs", 10, 50)
+    batch_size_p = trial.suggest_int("batch_size", 16, 256)
+    
     kfold = KFold(n_splits=5, shuffle=True, random_state=42)
     accuracies = []
     for train_idx, test_idx in kfold.split(X):
         X_train, y_train = X[train_idx], y[train_idx]
         X_test, y_test = X[test_idx], y[test_idx]
-        model.fit(X_train, y_train, epochs=50, batch_size=32, verbose=0)
+        model.fit(X_train, y_train, epochs=epochs_p, batch_size=batch_size_p, verbose=0)
         _, accuracy = model.evaluate(X_test, y_test, verbose=0)
         accuracies.append(accuracy)
 
@@ -257,3 +260,4 @@ study.optimize(objective, n_trials=100)
 # Imprimir los resultados
 print('Mejor valor de exactitud obtenido: ', study.best_value)
 print('Mejores hiperparámetros encontrados: ', study.best_params)
+
